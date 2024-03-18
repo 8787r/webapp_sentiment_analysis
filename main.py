@@ -207,28 +207,14 @@ if authentication_status:
                     # Generate the WordCloud
                     wordcloud_buffer = generate_wordcloud(clean_text)
 
-                    # Function to generate and download the report
-                    def generate_and_download_report():
-                        # Show spinner while generating report
-                        with st.spinner("Generating report..."):
-                            # Call the function to generate the report
-                            pdf_buffer = generate_pdf_report(overall_score, sentiment_counts, wordcloud_buffer, word_frequencies)
-                            
-                        # Hide spinner and offer the PDF report as a download link
-                        st.success("Report generated successfully!")
-                        st.download_button(
-                            label="Download Report as PDF",
-                            data=pdf_buffer,
-                            file_name="sentiment_analysis_report.pdf",
-                            mime="application/pdf",
-                        )
-                        
-                        # Stop the Streamlit app's execution
-                        st.experimental_stop()
-
-                    # Offer the option to download the report
-                    if st.button("Download Report"):
-                        generate_and_download_report()
+                    pdf_buffer = generate_pdf_report(overall_score, sentiment_counts, wordcloud_buffer, word_frequencies)
+                    
+                    st.download_button(
+                        label="Download Report as PDF",
+                        data=pdf_buffer,
+                        file_name="sentiment_analysis_report.pdf",
+                        mime="application/pdf",
+                    )
 
             elif selected == "View History":
                 st.header("View History")
