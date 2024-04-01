@@ -21,11 +21,11 @@ import math
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
 
-st.set_page_config(page_title="Sentiment Analysis Web App", page_icon=":bar_chart:",layout="wide")
+st.set_page_config(page_title="Comments Analyser Web App", page_icon=":bar_chart:",layout="wide")
 
 # user authentication
 names = ["Peter Parker", "Rebecca Miller"]
-usernames = ["pparker", "rmiller"]
+usernames = ["abc", "rmiller"]
 
 # load hashed passwords
 file_path = Path(__file__).parent / "hashed_pw.pkl"
@@ -56,11 +56,22 @@ if authentication_status:
 
     if selected == "Home":
         st.title(f"{selected}")
+        st.write("Welcome to the Comments Analyzer System!")
+        st.write("This system allows you to analyze comments or feedback data.")
+        st.write("You can upload your data to see the visualization in dashboard view.")
+        # st.write("To get started, click on the 'Get Started' button below.")
+        # if st.button("Get Started"):
+        #     selected = "Comments Analyser"
+
     if selected == "Comments Analyser":
         st.title(f"{selected}")
     if selected == "Contact":
         st.title(f"{selected}")
+        st.write("Email: commentsanalyser@cat405.my")
+
     if selected == "Logout":
+        st.title(f"{selected}")
+        st.write("Click on the 'Logout' button below.")
         authenticator.logout("Logout", "main")
 
     if selected == "Comments Analyser":
