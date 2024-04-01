@@ -18,6 +18,8 @@ from io import BytesIO
 from nltk.corpus import stopwords
 nltk.download('stopwords')
 import math
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.decomposition import LatentDirichletAllocation
 
 st.set_page_config(page_title="Sentiment Analysis Web App", page_icon=":bar_chart:",layout="wide")
 
@@ -237,6 +239,34 @@ if authentication_status:
                     plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
                     plt.tight_layout()
                     st.pyplot(fig)
+
+                    def perform_topic_modeling(text_data):
+                        # Initialize CountVectorizer
+                        vectorizer = CountVectorizer(max_df=0.95, min_df=2, stop_words='english')
+
+                        # Fit and transform your text data
+                        X = vectorizer.fit_transform(text_data)
+
+                        # Get feature names
+                        feature_names = vectorizer.get_feature_names_out()
+
+                        # Initialize LDA model
+                        num_topics = 5
+                        lda_model = LatentDirichletAllocation(n_components=num_topics, max_iter=10, learning_method='online', random_state=42)
+
+                        # Fit LDA to the transformed data
+                        lda_model.fit(X)
+
+                        # Display topics
+                        display_topics(lda_model, feature_names, num_top_words=10)
+
+                    def display_topics(model, feature_names, num_top_words):
+                        for topic_idx, topic in enumerate(model.components_):
+                            st.write(f"Topic {topic_idx}:")
+                            st.write(" ".join([feature_names[i] for i in topic.argsort()[:-num_top_words - 1:-1]]))
+
+                    # Perform topic modeling
+                    perform_topic_modeling(cleaned_column)
 
                     # # Themes discovery
                     # # Split cleaned text into words
