@@ -1,8 +1,12 @@
 import streamlit as st
-from auth import login, signup, logout
+from auth import login, signup, logout, check_session_timeout
 from comments_analyser import comments_analyser
+from datetime import datetime, timedelta
+# import datetime
 
 st.set_page_config(page_title="Comments Analyser Web App", page_icon=":bar_chart:", layout="wide")
+
+check_session_timeout()
 
 # Initialize session state variables
 if 'username' not in st.session_state:
@@ -27,7 +31,8 @@ def app():
             st.button('Create my account', on_click=signup)
         else:
             st.button('Login', on_click=login)
-
+    
+    # when login is successful
     if st.session_state.signout:
         st.text('Name: ' + st.session_state.username)
         st.text('Email id: ' + st.session_state.useremail)

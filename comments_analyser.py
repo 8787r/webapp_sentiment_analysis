@@ -12,7 +12,18 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
 import nltk
 from nltk.corpus import stopwords
+from google.cloud import firestore
+# import datetime
+from auth import get_firestore_client, check_session_timeout
+from datetime import datetime, timedelta
+from io import StringIO
+
 nltk.download('stopwords')
+
+check_session_timeout()
+
+# Get Firestore client
+db = get_firestore_client()
 
 # Function to perform sentiment analysis
 def perform_sentiment_analysis(text):
@@ -90,6 +101,79 @@ def generate_pdf_report(overall_score, sentiment_counts, wordcloud_buffer, word_
     buffer.seek(0)
     return buffer
 
+# Function to save dataset to Firestore in chunks
+def save_dataset_to_firestore(username, dataset_content, file_name, max_chunk_size=1048000):
+    # Read the CSV content into a DataFrame
+    df = pd.read_csv(StringIO(dataset_content))
+    
+    # Convert the DataFrame back to CSV format in chunks
+    csv_chunks = []
+    current_chunk = StringIO()
+    total_size = 0
+
+    for i, row in df.iterrows():
+        row_csv = row.to_frame().T.to_csv(index=False, header=False)
+        row_size = len(row_csv.encode('utf-8'))
+        
+        if total_size + row_size > max_chunk_size:
+            csv_chunks.append(current_chunk.getvalue())
+            current_chunk = StringIO()
+            total_size = 0
+        
+        current_chunk.write(row_csv)
+        total_size += row_size
+
+    if total_size > 0:
+        csv_chunks.append(current_chunk.getvalue())
+
+    # Save each chunk to Firestore
+    for idx, chunk in enumerate(csv_chunks):
+        dataset_data = {
+            "username": username,
+            "timestamp": datetime.utcnow(),
+            "chunk_id": idx,
+            "dataset": chunk,
+            "file_name": file_name
+        }
+        db.collection("datasets").add(dataset_data)
+
+# Function to get datasets for a user from Firestore
+def get_datasets_for_user(username):
+    datasets_ref = db.collection("datasets").where("username", "==", username).order_by("timestamp", direction=firestore.Query.DESCENDING).stream()
+    datasets = [dataset.to_dict() for dataset in datasets_ref]
+    return datasets
+
+# # Function to display datasets
+# def display_datasets(datasets):
+#     for dataset in datasets:
+#         st.write(f"Dataset uploaded on {dataset['timestamp']}")
+#         st.write(f"Dataset Content: {dataset['dataset']}")
+#         st.write("---")
+
+# Function to fetch and display upload history
+def view_upload_history(username):
+    try:
+        datasets_ref = db.collection("datasets").where("username", "==", username).stream()
+        
+        history = []
+        for dataset in datasets_ref:
+            data = dataset.to_dict()
+            file_name = data.get("file_name", "Unknown File")  # Use a default value if 'file_name' is missing
+            timestamp = data.get("timestamp", "Unknown Timestamp")  # Use a default value if 'timestamp' is missing
+            
+            # Append the file name and timestamp to the history list
+            history.append({"File Name": file_name, "Upload Time": timestamp})
+
+        # Convert the history list to a DataFrame
+        history_df = pd.DataFrame(history)
+
+        # Display the history in table format
+        st.write("Upload History:")
+        st.write(history_df.to_html(index=False), unsafe_allow_html=True)
+
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
+
 def comments_analyser():
     st.title("Comments Analyser")
 
@@ -136,6 +220,13 @@ def comments_analyser():
             st.write("Analyzed Data:")
             st.write(analyzed_df.head(10))
             
+            # Save dataset to Firestore
+            file_name = upl.name
+            dataset_content = df.to_csv(index=False)
+            save_dataset_to_firestore(st.session_state.username, dataset_content, file_name)
+
+            st.write("Dataset saved successfully!")
+
             # Download analyzed data as CSV
             @st.cache_data
             def convert_df(df):
@@ -223,4 +314,10 @@ def comments_analyser():
 
     elif selected == "View History":
         st.header("View History")
-        st.write("Coming soon...")
+        username = st.session_state.username
+        datasets = get_datasets_for_user(username)
+        if datasets:
+            # display_datasets(datasets)
+            view_upload_history(st.session_state.username)
+        else:
+            st.write("No datasets found.")

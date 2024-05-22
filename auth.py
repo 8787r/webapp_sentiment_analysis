@@ -2,6 +2,9 @@ import streamlit as st
 import bcrypt
 import firebase_admin
 from firebase_admin import firestore, credentials, auth
+from datetime import datetime, timedelta
+# import datetime
+import time  # Import the time module
 
 # Initialize Firebase
 if not firebase_admin._apps:
@@ -10,6 +13,9 @@ if not firebase_admin._apps:
 
 # Firestore client
 db = firestore.client()
+
+def get_firestore_client():
+    return db
 
 def hash_password(password):
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
@@ -31,6 +37,8 @@ def login():
                 st.session_state.useremail = user_data.get("email")
                 st.session_state.signedout = True
                 st.session_state.signout = True
+                # Set login time
+                st.session_state.login_time = time.time()
             else:
                 st.warning('Login Failed: Incorrect password')
         else:
@@ -67,3 +75,25 @@ def logout():
     st.session_state.signedout = False   
     st.session_state.username = ''
     st.experimental_rerun()
+
+# Define session timeout duration (1 hour in this system)
+SESSION_TIMEOUT_MINUTES = 60
+
+def check_session_timeout():
+    if 'last_activity' not in st.session_state:
+        # If last activity timestamp not set, set it to the current time
+        st.session_state.last_activity = datetime.now()
+        return
+
+    # Calculate time elapsed since last activity
+    elapsed_time = datetime.now() - st.session_state.last_activity
+
+    # If elapsed time exceeds session timeout duration, clear session
+    if elapsed_time.total_seconds() > (SESSION_TIMEOUT_MINUTES * 60):
+        # Clear session variables
+        st.session_state.clear()
+        # Redirect to login page or perform other actions as needed
+        st.write("Session timed out. Please log in again.")
+    else:
+        # Update last activity timestamp to current time
+        st.session_state.last_activity = datetime.now()
