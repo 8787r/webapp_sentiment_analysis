@@ -1,2 +1,3 @@
 firestore-key.json
 .venv
+__pycache__/
