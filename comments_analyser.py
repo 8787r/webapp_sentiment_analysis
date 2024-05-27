@@ -13,7 +13,6 @@ from sklearn.decomposition import LatentDirichletAllocation
 import nltk
 from nltk.corpus import stopwords
 from google.cloud import firestore
-# import datetime
 from auth import get_firestore_client, check_session_timeout
 from datetime import datetime, timedelta
 from io import StringIO
@@ -61,40 +60,50 @@ def generate_wordcloud(clean_text):
     img_buffer.seek(0)
     return img_buffer
 
-def generate_pdf_report(overall_score, sentiment_counts, wordcloud_buffer, word_frequencies):
+def generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_buffer, word_frequencies, sentiment_score_fig, sentiment_pie_fig, top_words_fig):
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=letter)
     page_width, page_height = letter
     
     # Overall Sentiment Score
-    pdf.drawString(100, page_height - 50, f"Overall Sentiment Score: {overall_score}")
+    pdf.drawString(100, page_height - 50, f"Overall Sentiment Score: {overall_score:.2f}")
     
     # Percentage of Sentiments
-    pdf.drawString(100, page_height - 70, f"Percentage of Positive Sentiment: {sentiment_counts.get('Positive', 0)} %")
-    pdf.drawString(100, page_height - 90, f"Percentage of Negative Sentiment: {sentiment_counts.get('Negative', 0)} %")
-    pdf.drawString(100, page_height - 110, f"Percentage of Neutral Sentiment: {sentiment_counts.get('Neutral', 0)} %")
+    pdf.drawString(100, page_height - 70, f"Percentage of Positive Sentiment: {sentiment_counts.get('Positive', 0):.2f} %")
+    pdf.drawString(100, page_height - 90, f"Percentage of Negative Sentiment: {sentiment_counts.get('Negative', 0):.2f} %")
+    pdf.drawString(100, page_height - 110, f"Percentage of Neutral Sentiment: {sentiment_counts.get('Neutral', 0):.2f} %")
     
     # Word Cloud
     wordcloud_img = ImageReader(wordcloud_buffer)  # Convert BytesIO to ImageReader
-    pdf.drawImage(wordcloud_img, 100, page_height - 300, width=400, height=300)
+    pdf.drawImage(wordcloud_img, 100, page_height - 500, width=400, height=300)
 
     # Top Ten Words with Highest Frequency
-    pdf.drawString(100, page_height - 350, "Top Ten Words with Highest Frequency:")
-    y_position = page_height - 370
-    max_items_per_page = 30  # Adjust as needed
-    current_page = 1
-    start_index = 0
-
-    for index, (word, frequency) in enumerate(word_frequencies.items()):
-        if index % max_items_per_page == 0 and index > 0:
-            # Start a new page after reaching the maximum items per page
-            pdf.showPage()
-            current_page += 1
-            y_position = page_height - 50  # Adjust as needed
-            pdf.drawString(100, y_position, f"Page {current_page}")
-
+    pdf.drawString(100, page_height - 550, "Top Ten Words with Highest Frequency:")
+    y_position = page_height - 570
+    for word, frequency in word_frequencies.items():
         pdf.drawString(100, y_position, f"{word}: {frequency}")
         y_position -= 20
+
+    # Add sentiment score bar chart
+    img_buffer = BytesIO()
+    sentiment_score_fig.savefig(img_buffer, format='png')
+    img_buffer.seek(0)
+    sentiment_score_img = ImageReader(img_buffer)
+    pdf.drawImage(sentiment_score_img, 100, page_height - 800, width=400, height=200)
+
+    # Add sentiment pie chart
+    img_buffer = BytesIO()
+    sentiment_pie_fig.savefig(img_buffer, format='png')
+    img_buffer.seek(0)
+    sentiment_pie_img = ImageReader(img_buffer)
+    pdf.drawImage(sentiment_pie_img, 100, page_height - 1100, width=400, height=200)
+
+    # Add top words bar chart
+    img_buffer = BytesIO()
+    top_words_fig.savefig(img_buffer, format='png')
+    img_buffer.seek(0)
+    top_words_img = ImageReader(img_buffer)
+    pdf.drawImage(top_words_img, 100, page_height - 1400, width=400, height=200)
 
     pdf.save()
     
@@ -143,13 +152,6 @@ def get_datasets_for_user(username):
     datasets = [dataset.to_dict() for dataset in datasets_ref]
     return datasets
 
-# # Function to display datasets
-# def display_datasets(datasets):
-#     for dataset in datasets:
-#         st.write(f"Dataset uploaded on {dataset['timestamp']}")
-#         st.write(f"Dataset Content: {dataset['dataset']}")
-#         st.write("---")
-
 # Function to fetch and display upload history
 def view_upload_history(username):
     try:
@@ -161,8 +163,16 @@ def view_upload_history(username):
             file_name = data.get("file_name", "Unknown File")  # Use a default value if 'file_name' is missing
             timestamp = data.get("timestamp", "Unknown Timestamp")  # Use a default value if 'timestamp' is missing
             
+            if isinstance(timestamp, datetime):
+                formatted_timestamp = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                formatted_timestamp = timestamp
+
             # Append the file name and timestamp to the history list
-            history.append({"File Name": file_name, "Upload Time": timestamp})
+            history.append({"File Name": file_name, "Upload Time": formatted_timestamp})
+
+        # Sort the history list by 'Upload Time' in descending order
+        history = sorted(history, key=lambda x: x["Upload Time"], reverse=True)
 
         # Convert the history list to a DataFrame
         history_df = pd.DataFrame(history)
@@ -200,7 +210,7 @@ def comments_analyser():
 
     def display_topics(model, feature_names, num_top_words):
         for topic_idx, topic in enumerate(model.components_):
-            st.write(f"Topic {topic_idx}:")
+            st.write(f"Topic {topic_idx+1}:")
             st.write(" ".join([feature_names[i] for i in topic.argsort()[:-num_top_words - 1:-1]]))
 
     selected = st.selectbox("Select Option", ["Upload Data", "View History"])
@@ -243,27 +253,27 @@ def comments_analyser():
             
             # Overall Sentiment Score
             overall_score = analyzed_df['Polarity'].mean()
-            overall_score_percentage = round(overall_score * 100, 2)
-            fig, ax = plt.subplots(figsize=(8, 2))
-            ax.barh(['Overall Sentiment Score'], [100], color='lightgray')  # Full percentage bar
-            ax.barh(['Overall Sentiment Score'], [overall_score_percentage], color='blue')  # Score percentage bar
-            ax.set_xlabel('Percentage')
-            ax.set_title('Overall Sentiment Score')
-            ax.set_xlim(0, 100)
-            ax.invert_yaxis()  # Invert y-axis to have the bar extend from left to right
-            ax.text(overall_score_percentage + 2, 0, f'{overall_score_percentage}%', va='center')
-            ax.legend()
-            st.pyplot(fig)
+            overall_score_percentage = round((overall_score + 1) / 2 * 100, 2)  # Scale to [0, 100] for visualization
+
+            fig1, ax1 = plt.subplots(figsize=(8, 2))
+            ax1.barh(['Overall Sentiment Score'], [100], color='lightgray')  # Full percentage bar
+            ax1.barh(['Overall Sentiment Score'], [overall_score_percentage], color='blue')  # Score percentage bar
+            ax1.set_xlabel('Percentage')
+            ax1.set_title('Overall Sentiment Score')
+            ax1.set_xlim(0, 100)
+            ax1.invert_yaxis()  # Invert y-axis to have the bar extend from left to right
+            ax1.text(overall_score_percentage + 2, 0, f'{overall_score_percentage}%', va='center')
+            st.pyplot(fig1)
 
             # Percentage of Positive/Negative/Neutral Sentiment
             sentiment_counts = analyzed_df['Sentiment'].value_counts(normalize=True) * 100
             labels = sentiment_counts.index
             sizes = sentiment_counts.values
-            fig, ax = plt.subplots(figsize=(8, 6))
-            ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140)
-            ax.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
-            ax.set_title('Percentage of Sentiment')
-            st.pyplot(fig)
+            fig2, ax2 = plt.subplots(figsize=(8, 6))
+            ax2.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140)
+            ax2.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
+            ax2.set_title('Percentage of Sentiment')
+            st.pyplot(fig2)
 
             # Perform data cleaning on the text column
             cleaned_column = analyzed_df[analyzed_df.columns[0]].apply(lambda x: cleantext.clean(x, clean_all=False, extra_spaces=True,
@@ -275,27 +285,27 @@ def comments_analyser():
 
             # Generate Word Cloud
             wordcloud = WordCloud().generate(clean_text)
-            fig, ax = plt.subplots()
-            ax.imshow(wordcloud, interpolation='bilinear')
-            ax.axis("off")
-            st.pyplot(fig)
+            fig3, ax3 = plt.subplots()
+            ax3.imshow(wordcloud, interpolation='bilinear')
+            ax3.axis("off")
+            st.pyplot(fig3)
             wordcloud_buffer = generate_wordcloud(clean_text)
 
             # Top Ten Words with Highest Frequency
             word_frequencies = pd.Series(clean_text.split()).value_counts()[:10]
             words = word_frequencies.index.tolist()
             frequencies = word_frequencies.values.tolist()
-            fig, ax = plt.subplots(figsize=(10, 6))
-            bars = ax.bar(words, frequencies, color='skyblue')
-            ax.set_xlabel('Words')
-            ax.set_ylabel('Frequency')
-            ax.set_title('Top Ten Words with Highest Frequency')
+            fig4, ax4 = plt.subplots(figsize=(10, 6))
+            bars = ax4.bar(words, frequencies, color='skyblue')
+            ax4.set_xlabel('Words')
+            ax4.set_ylabel('Frequency')
+            ax4.set_title('Top Ten Words with Highest Frequency')
             for bar, freq in zip(bars, frequencies):
-                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(), str(freq), ha='center', va='bottom')
-            ax.set_xticks(ax.get_xticks())
-            plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+                ax4.text(bar.get_x() + bar.get_width() / 2, bar.get_height(), str(freq), ha='center', va='bottom')
+            ax4.set_xticks(ax4.get_xticks())
+            plt.setp(ax4.get_xticklabels(), rotation=45, ha='right')
             plt.tight_layout()
-            st.pyplot(fig)
+            st.pyplot(fig4)
 
             # Perform topic modeling
             perform_topic_modeling(cleaned_column)
@@ -303,7 +313,9 @@ def comments_analyser():
             # Generate the WordCloud
             wordcloud_buffer = generate_wordcloud(clean_text)
 
-            pdf_buffer = generate_pdf_report(overall_score, sentiment_counts, wordcloud_buffer, word_frequencies)
+            # Assuming you have analyzed_df, overall_score, sentiment_counts, wordcloud_buffer, and word_frequencies
+            pdf_buffer = generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_buffer, word_frequencies, fig1, fig2, fig4)
+
             
             st.download_button(
                 label="Download Report as PDF",
@@ -321,3 +333,6 @@ def comments_analyser():
             view_upload_history(st.session_state.username)
         else:
             st.write("No datasets found.")
+
+if __name__ == "__main__":
+    comments_analyser()
