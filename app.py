@@ -37,18 +37,49 @@ def app():
         st.text('Name: ' + st.session_state.username)
         st.text('Email id: ' + st.session_state.useremail)
 
-        selected = st.selectbox(
-            "Navigation",
-            ["Home", "Comments Analyser", "Contact", "Logout"],
-            index=0,
-            format_func=lambda x: x if x != "Logout" else "Log out"
-        )
+        # selected = st.selectbox(
+        #     "Navigation",
+        #     ["Home", "Comments Analyser", "Contact", "Logout"],
+        #     index=0,
+        #     format_func=lambda x: x if x != "Logout" else "Log out"
+        # )
+
+        st.sidebar.title("Navigation")
+        selected = st.sidebar.selectbox("Select Option", ["Home", "Comments Analyser", "Contact", "Logout"])
+
 
         if selected == "Home":
-            st.title("Home")
-            st.write("Welcome to the Comments Analyzer System!")
-            st.write("This system allows you to analyze comments or feedback data.")
-            st.write("You can upload your data to see the visualization in dashboard view.")
+            # First Section: Welcome Messages
+            st.markdown(
+                """
+                <div style="text-align: center;">
+                    <h2><b>Welcome to the Comments Analyzer System!</b></h2>
+                    <p>This system allows you to analyze comments or feedback data.</p>
+                    <p>You can upload your data to see the visualization in dashboard view.</p>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            # Space between sections
+            st.markdown("<br><br>", unsafe_allow_html=True)
+
+            # Second Section: Steps to Use the System
+            st.markdown(
+                """
+                <div style="text-align: left;">
+                    <h3>Steps to Use the System:</h3>
+                    <ol>
+                        <li>Go to the "Upload Data" section to upload your comments or feedback data.</li>
+                        <li>Once uploaded, the system will analyze the data and provide visualizations.</li>
+                        <li>You can download the analyzed data as a CSV file.</li>
+                        <li>Generate and download a comprehensive PDF report of the analysis.</li>
+                        <li>View your previously uploaded history in the "View History" section.</li>
+                    </ol>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
         if selected == "Contact":
             st.title("Contact")
