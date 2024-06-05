@@ -1,7 +1,6 @@
 import pandas as pd
 import streamlit as st
 import cleantext
-from textblob import TextBlob
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 from io import BytesIO
@@ -16,22 +15,27 @@ from google.cloud import firestore
 from auth import get_firestore_client, check_session_timeout
 from datetime import datetime, timedelta
 from io import StringIO
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
 nltk.download('stopwords')
+nltk.download('vader_lexicon')
 
 check_session_timeout()
 
 # Get Firestore client
 db = get_firestore_client()
 
-# Function to perform sentiment analysis
+# Initialize VADER sentiment analyzer
+sid = SentimentIntensityAnalyzer()
+
+# Function to perform sentiment analysis using VADER
 def perform_sentiment_analysis(text):
     # Clean the text
     cleaned_text = cleantext.clean(text, clean_all=False, extra_spaces=True,
                                    stopwords=True, lowercase=True,
                                    numbers=True, punct=True)
-    blob = TextBlob(cleaned_text)
-    polarity = round(blob.sentiment.polarity, 2)
+    sentiment_scores = sid.polarity_scores(cleaned_text)
+    polarity = round(sentiment_scores['compound'], 2)
     sentiment = analyze(polarity)
     return polarity, sentiment
 
@@ -60,50 +64,66 @@ def generate_wordcloud(clean_text):
     img_buffer.seek(0)
     return img_buffer
 
-def generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_buffer, word_frequencies, sentiment_score_fig, sentiment_pie_fig, top_words_fig):
+def generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_buffer, word_frequencies, sentiment_score_fig, sentiment_pie_fig, top_words_fig, lda_model, feature_names):
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=letter)
     page_width, page_height = letter
     
-    # Overall Sentiment Score
-    pdf.drawString(100, page_height - 50, f"Overall Sentiment Score: {overall_score:.2f}")
-    
-    # Percentage of Sentiments
-    pdf.drawString(100, page_height - 70, f"Percentage of Positive Sentiment: {sentiment_counts.get('Positive', 0):.2f} %")
-    pdf.drawString(100, page_height - 90, f"Percentage of Negative Sentiment: {sentiment_counts.get('Negative', 0):.2f} %")
-    pdf.drawString(100, page_height - 110, f"Percentage of Neutral Sentiment: {sentiment_counts.get('Neutral', 0):.2f} %")
-    
-    # Word Cloud
-    wordcloud_img = ImageReader(wordcloud_buffer)  # Convert BytesIO to ImageReader
-    pdf.drawImage(wordcloud_img, 100, page_height - 500, width=400, height=300)
+    # Function to add a new page if the current page is full
+    def check_y_position(y_position, min_y, content_height):
+        if y_position - content_height < min_y:
+            pdf.showPage()  # Add new page
+            return page_height - 50
+        return y_position
 
-    # Top Ten Words with Highest Frequency
-    pdf.drawString(100, page_height - 550, "Top Ten Words with Highest Frequency:")
-    y_position = page_height - 570
-    for word, frequency in word_frequencies.items():
-        pdf.drawString(100, y_position, f"{word}: {frequency}")
-        y_position -= 20
+    # Initialize y_position
+    y_position = page_height - 50
 
     # Add sentiment score bar chart
     img_buffer = BytesIO()
+    sentiment_score_fig.set_size_inches(5, 2.5)  # Resize the figure
     sentiment_score_fig.savefig(img_buffer, format='png')
     img_buffer.seek(0)
     sentiment_score_img = ImageReader(img_buffer)
-    pdf.drawImage(sentiment_score_img, 100, page_height - 800, width=400, height=200)
+    y_position = check_y_position(y_position, 50, 200)  # Check if the content fits
+    pdf.drawImage(sentiment_score_img, 100, y_position - 200, width=400, height=200)
+    y_position -= 250  # Adjust y_position after adding the image
 
     # Add sentiment pie chart
     img_buffer = BytesIO()
+    sentiment_pie_fig.set_size_inches(5, 3)  # Resize the figure
     sentiment_pie_fig.savefig(img_buffer, format='png')
     img_buffer.seek(0)
     sentiment_pie_img = ImageReader(img_buffer)
-    pdf.drawImage(sentiment_pie_img, 100, page_height - 1100, width=400, height=200)
+    y_position = check_y_position(y_position, 50, 200)  # Check if the content fits
+    pdf.drawImage(sentiment_pie_img, 100, y_position - 200, width=400, height=200)
+    y_position -= 250  # Adjust y_position after adding the image
+
+    # Add word cloud
+    y_position = check_y_position(y_position, 50, 300)  # Check if the content fits
+    wordcloud_img = ImageReader(wordcloud_buffer)
+    pdf.drawImage(wordcloud_img, 100, y_position - 300, width=400, height=300)
+    y_position -= 350  # Adjust y_position after adding the image
 
     # Add top words bar chart
     img_buffer = BytesIO()
+    top_words_fig.set_size_inches(5, 3)  # Resize the figure
     top_words_fig.savefig(img_buffer, format='png')
     img_buffer.seek(0)
     top_words_img = ImageReader(img_buffer)
-    pdf.drawImage(top_words_img, 100, page_height - 1400, width=400, height=200)
+    y_position = check_y_position(y_position, 50, 200)  # Check if the content fits
+    pdf.drawImage(top_words_img, 100, y_position - 200, width=400, height=200)
+    y_position -= 250  # Adjust y_position after adding the image
+
+    # Add topics from LDA
+    y_position = check_y_position(y_position, 50, 20)  # Check if the content fits
+    pdf.drawString(100, y_position, "Topics Identified:")
+    y_position -= 20
+    for topic_idx, topic in enumerate(lda_model.components_):
+        y_position = check_y_position(y_position, 50, 20)  # Check if the content fits
+        topic_words = " ".join([feature_names[i] for i in topic.argsort()[:-10 - 1:-1]])
+        pdf.drawString(100, y_position, f"Topic {topic_idx+1}: {topic_words}")
+        y_position -= 20
 
     pdf.save()
     
@@ -205,13 +225,7 @@ def comments_analyser():
         # Fit LDA to the transformed data
         lda_model.fit(X)
 
-        # Display topics
-        display_topics(lda_model, feature_names, num_top_words=10)
-
-    def display_topics(model, feature_names, num_top_words):
-        for topic_idx, topic in enumerate(model.components_):
-            st.write(f"Topic {topic_idx+1}:")
-            st.write(" ".join([feature_names[i] for i in topic.argsort()[:-num_top_words - 1:-1]]))
+        return lda_model, feature_names
 
     selected = st.selectbox("Select Option", ["Upload Data", "View History"])
 
@@ -308,15 +322,14 @@ def comments_analyser():
             st.pyplot(fig4)
 
             # Perform topic modeling
-            perform_topic_modeling(cleaned_column)
+            lda_model, feature_names = perform_topic_modeling(cleaned_column)
+            for topic_idx, topic in enumerate(lda_model.components_):
+                st.write(f"Topic {topic_idx+1}:")
+                st.write(" ".join([feature_names[i] for i in topic.argsort()[:-10 - 1:-1]]))
 
-            # Generate the WordCloud
-            wordcloud_buffer = generate_wordcloud(clean_text)
+            # Generate the PDF report
+            pdf_buffer = generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_buffer, word_frequencies, fig1, fig2, fig4, lda_model, feature_names)
 
-            # Assuming you have analyzed_df, overall_score, sentiment_counts, wordcloud_buffer, and word_frequencies
-            pdf_buffer = generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_buffer, word_frequencies, fig1, fig2, fig4)
-
-            
             st.download_button(
                 label="Download Report as PDF",
                 data=pdf_buffer,
