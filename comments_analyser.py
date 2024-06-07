@@ -173,7 +173,7 @@ def get_datasets_for_user(username):
     datasets = [dataset.to_dict() for dataset in datasets_ref]
     return datasets
 
-# Function to fetch and display upload history
+# Function to fetch and display upload history with delete option
 def view_upload_history(username):
     try:
         datasets_ref = db.collection("datasets").where("username", "==", username).stream()
@@ -192,22 +192,47 @@ def view_upload_history(username):
             else:
                 formatted_timestamp = timestamp
 
-            # Append the file name and timestamp to the history list
-            history.append({"File Name": file_name, "Upload Time": formatted_timestamp})
+            # Append the file name, timestamp, and document ID to the history list
+            history.append({"File Name": file_name, "Upload Time": formatted_timestamp, "doc_id": dataset.id})
 
         # Sort the history list by 'Upload Time' in descending order
         history = sorted(history, key=lambda x: x["Upload Time"], reverse=True)
 
-        # Convert the history list to a DataFrame
-        history_df = pd.DataFrame(history)
-
-        # Display the history in table format
+        # Display the history with delete buttons
         st.write("Upload History:")
-        st.write(history_df.to_html(index=False), unsafe_allow_html=True)
+        for entry in history:
+            col1, col2, col3 = st.columns([4, 4, 1])
+            col1.write(entry["File Name"])
+            col2.write(entry["Upload Time"])
+            if col3.button("Delete", key=f"delete_{entry['doc_id']}"):
+                st.session_state.confirm_delete = entry["doc_id"]
+                st.session_state.file_name_to_delete = entry["File Name"]
+                st.experimental_rerun()  # Rerun the app to refresh the state
+
+        # Display confirmation modal if a delete action is triggered
+        if st.session_state.get("confirm_delete"):
+            st.write(f"Are you sure you want to delete the file '{st.session_state.file_name_to_delete}'?")
+            confirm_col, cancel_col = st.columns([1, 1])
+            if confirm_col.button("Confirm"):
+                delete_history_entry(st.session_state.confirm_delete)
+                st.session_state.confirm_delete = None
+                st.session_state.file_name_to_delete = None
+                st.experimental_rerun()
+            if cancel_col.button("Cancel"):
+                st.session_state.confirm_delete = None
+                st.session_state.file_name_to_delete = None
+                st.experimental_rerun()
 
     except Exception as e:
         st.error(f"An error occurred: {e}")
 
+# Function to delete a history entry from Firestore
+def delete_history_entry(doc_id):
+    try:
+        db.collection("datasets").document(doc_id).delete()
+        st.success("Deleted successfully.")
+    except Exception as e:
+        st.error(f"An error occurred while deleting: {e}")
 
 def perform_topic_modeling(text_data):
     # Initialize CountVectorizer
