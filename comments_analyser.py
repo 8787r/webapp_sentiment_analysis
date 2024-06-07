@@ -16,6 +16,7 @@ from auth import get_firestore_client, check_session_timeout
 from datetime import datetime, timedelta
 from io import StringIO
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
+import pytz
 
 nltk.download('stopwords')
 nltk.download('vader_lexicon')
@@ -64,7 +65,7 @@ def generate_wordcloud(clean_text):
     img_buffer.seek(0)
     return img_buffer
 
-def generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_buffer, word_frequencies, sentiment_score_fig, sentiment_pie_fig, top_words_fig, lda_model, feature_names):
+def generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_buffer, sentiment_score_fig, sentiment_pie_fig, topic_words_fig, lda_model, feature_names):
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=letter)
     page_width, page_height = letter
@@ -105,14 +106,14 @@ def generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_
     pdf.drawImage(wordcloud_img, 100, y_position - 300, width=400, height=300)
     y_position -= 350  # Adjust y_position after adding the image
 
-    # Add top words bar chart
+    # Add top words bar chart for each topic
     img_buffer = BytesIO()
-    top_words_fig.set_size_inches(5, 3)  # Resize the figure
-    top_words_fig.savefig(img_buffer, format='png')
+    topic_words_fig.set_size_inches(5, 3)  # Resize the figure
+    topic_words_fig.savefig(img_buffer, format='png')
     img_buffer.seek(0)
-    top_words_img = ImageReader(img_buffer)
+    topic_words_img = ImageReader(img_buffer)
     y_position = check_y_position(y_position, 50, 200)  # Check if the content fits
-    pdf.drawImage(top_words_img, 100, y_position - 200, width=400, height=200)
+    pdf.drawImage(topic_words_img, 100, y_position - 200, width=400, height=200)
     y_position -= 250  # Adjust y_position after adding the image
 
     # Add topics from LDA
@@ -176,7 +177,7 @@ def get_datasets_for_user(username):
 def view_upload_history(username):
     try:
         datasets_ref = db.collection("datasets").where("username", "==", username).stream()
-        
+
         history = []
         for dataset in datasets_ref:
             data = dataset.to_dict()
@@ -184,7 +185,10 @@ def view_upload_history(username):
             timestamp = data.get("timestamp", "Unknown Timestamp")  # Use a default value if 'timestamp' is missing
             
             if isinstance(timestamp, datetime):
-                formatted_timestamp = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+                # Convert timestamp to the desired time zone (e.g., UTC+8)
+                target_time_zone = pytz.timezone("Asia/Shanghai")
+                local_timestamp = timestamp.astimezone(target_time_zone)
+                formatted_timestamp = local_timestamp.strftime("%Y-%m-%d %H:%M:%S")
             else:
                 formatted_timestamp = timestamp
 
@@ -204,30 +208,30 @@ def view_upload_history(username):
     except Exception as e:
         st.error(f"An error occurred: {e}")
 
+
+def perform_topic_modeling(text_data):
+    # Initialize CountVectorizer
+    vectorizer = CountVectorizer(max_df=0.95, min_df=2, stop_words='english')
+
+    # Fit and transform your text data
+    X = vectorizer.fit_transform(text_data)
+
+    # Get feature names
+    feature_names = vectorizer.get_feature_names_out()
+
+    # Initialize LDA model
+    num_topics = 5
+    lda_model = LatentDirichletAllocation(n_components=num_topics, max_iter=10, learning_method='online', random_state=42)
+
+    # Fit LDA to the transformed data
+    lda_model.fit(X)
+
+    return lda_model, feature_names
+
 def comments_analyser():
     st.title("Comments Analyser")
 
-    # Function to perform topic modeling
-    def perform_topic_modeling(text_data):
-        # Initialize CountVectorizer
-        vectorizer = CountVectorizer(max_df=0.95, min_df=2, stop_words='english')
-
-        # Fit and transform your text data
-        X = vectorizer.fit_transform(text_data)
-
-        # Get feature names
-        feature_names = vectorizer.get_feature_names_out()
-
-        # Initialize LDA model
-        num_topics = 5
-        lda_model = LatentDirichletAllocation(n_components=num_topics, max_iter=10, learning_method='online', random_state=42)
-
-        # Fit LDA to the transformed data
-        lda_model.fit(X)
-
-        return lda_model, feature_names
-
-    selected = st.selectbox("Select Option", ["Upload Data", "View History"])
+    selected = st.selectbox("Select Section", ["Upload Data", "View History"])
 
     if selected == "Upload Data":
         st.header("Upload Data")
@@ -235,13 +239,13 @@ def comments_analyser():
 
         if upl:
             df = pd.read_csv(upl) if upl.name.endswith('.csv') else pd.read_excel(upl, engine='openpyxl')
-            st.write("Original Data:")
+            st.write("First ten rows of Original Data:")
             st.write(df.head(10))
 
             # Perform phrase extraction and sentiment analysis
             analyzed_df = analyze_dataframe(df)
 
-            st.write("Analyzed Data:")
+            st.write("First ten rows of Analyzed Data:")
             st.write(analyzed_df.head(10))
             
             # Save dataset to Firestore
@@ -249,7 +253,7 @@ def comments_analyser():
             dataset_content = df.to_csv(index=False)
             save_dataset_to_firestore(st.session_state.username, dataset_content, file_name)
 
-            st.write("Dataset saved successfully!")
+            st.write("Dataset is analyzed and saved successfully!")
 
             # Download analyzed data as CSV
             @st.cache_data
@@ -305,30 +309,32 @@ def comments_analyser():
             st.pyplot(fig3)
             wordcloud_buffer = generate_wordcloud(clean_text)
 
-            # Top Ten Words with Highest Frequency
-            word_frequencies = pd.Series(clean_text.split()).value_counts()[:10]
-            words = word_frequencies.index.tolist()
-            frequencies = word_frequencies.values.tolist()
-            fig4, ax4 = plt.subplots(figsize=(10, 6))
-            bars = ax4.bar(words, frequencies, color='skyblue')
-            ax4.set_xlabel('Words')
-            ax4.set_ylabel('Frequency')
-            ax4.set_title('Top Ten Words with Highest Frequency')
-            for bar, freq in zip(bars, frequencies):
-                ax4.text(bar.get_x() + bar.get_width() / 2, bar.get_height(), str(freq), ha='center', va='bottom')
-            ax4.set_xticks(ax4.get_xticks())
-            plt.setp(ax4.get_xticklabels(), rotation=45, ha='right')
-            plt.tight_layout()
-            st.pyplot(fig4)
-
             # Perform topic modeling
             lda_model, feature_names = perform_topic_modeling(cleaned_column)
             for topic_idx, topic in enumerate(lda_model.components_):
                 st.write(f"Topic {topic_idx+1}:")
                 st.write(" ".join([feature_names[i] for i in topic.argsort()[:-10 - 1:-1]]))
 
+            # Bar chart for top words in each topic
+            topic_word_data = {}
+            for topic_idx, topic in enumerate(lda_model.components_):
+                topic_words = [feature_names[i] for i in topic.argsort()[:-11:-1]]
+                topic_word_data[f'Topic {topic_idx+1}'] = topic_words
+
+            selected_topic = st.sidebar.selectbox("Select Topic", list(topic_word_data.keys()))
+
+            if selected_topic:
+                fig5, ax5 = plt.subplots()
+                words = topic_word_data[selected_topic]
+                counts = [lda_model.components_[list(topic_word_data.keys()).index(selected_topic)][feature_names.tolist().index(word)] for word in words]
+                ax5.barh(words, counts, color='skyblue')
+                ax5.set_xlabel('Frequency')
+                ax5.set_title(f'Top Words in {selected_topic}')
+                ax5.invert_yaxis()
+                st.pyplot(fig5)
+            
             # Generate the PDF report
-            pdf_buffer = generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_buffer, word_frequencies, fig1, fig2, fig4, lda_model, feature_names)
+            pdf_buffer = generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_buffer, fig1, fig2, fig5, lda_model, feature_names)
 
             st.download_button(
                 label="Download Report as PDF",

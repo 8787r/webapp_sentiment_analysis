@@ -19,7 +19,7 @@ if 'signout' not in st.session_state:
     st.session_state['signout'] = False
 
 def app():
-    st.title('Welcome to Comments Analyzer System!')
+    st.title('Comments Analyser System')
 
     if not st.session_state["signedout"]:
         choice = st.selectbox('Login/Signup', ['Login', 'Sign up'])
@@ -37,16 +37,8 @@ def app():
         st.text('Name: ' + st.session_state.username)
         st.text('Email id: ' + st.session_state.useremail)
 
-        # selected = st.selectbox(
-        #     "Navigation",
-        #     ["Home", "Comments Analyser", "Contact", "Logout"],
-        #     index=0,
-        #     format_func=lambda x: x if x != "Logout" else "Log out"
-        # )
-
         st.sidebar.title("Navigation")
-        selected = st.sidebar.selectbox("Select Option", ["Home", "Comments Analyser", "Contact", "Logout"])
-
+        selected = st.sidebar.selectbox("Select Section", ["Home", "Comments Analyser", "Contact", "Logout"])
 
         if selected == "Home":
             # First Section: Welcome Messages
