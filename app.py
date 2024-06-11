@@ -3,6 +3,7 @@ from auth import login, signup, logout, check_session_timeout
 from comments_analyser import comments_analyser
 from datetime import datetime, timedelta
 # import datetime
+import base64
 
 st.set_page_config(page_title="Comments Analyser Web App", page_icon=":bar_chart:", layout="wide")
 
@@ -17,11 +18,36 @@ if "signedout" not in st.session_state:
     st.session_state["signedout"] = False
 if 'signout' not in st.session_state:
     st.session_state['signout'] = False
+if 'selected_section' not in st.session_state:
+    st.session_state['selected_section'] = "Home"
+
+# Function to set the background image
+def set_background(image_file):
+    with open(image_file, "rb") as image:
+        encoded_string = base64.b64encode(image.read()).decode()
+    st.markdown(
+        f"""
+        <style>
+        .stApp {{
+            background-image: url("data:image/png;base64,{encoded_string}");
+            background-size: cover;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
 def app():
     st.title('Comments Analyser System')
 
+    # login/signup
     if not st.session_state["signedout"]:
+        set_background("login.png")
+
+        st.write("This system allows organizations to analyze comments or feedback data.")
+        st.write("You can upload the data to see the visualization in dashboard view.")
+        st.markdown("<br><br>", unsafe_allow_html=True)
+
         choice = st.selectbox('Login/Signup', ['Login', 'Sign up'])
         email = st.text_input('Email Address', key='email')
         password = st.text_input('Password', type='password', key='password')
@@ -35,10 +61,11 @@ def app():
     # when login is successful
     if st.session_state.signout:
         st.text('Name: ' + st.session_state.username)
-        st.text('Email id: ' + st.session_state.useremail)
+        st.text('Email: ' + st.session_state.useremail)
 
+        # Sidebar Navigation
         st.sidebar.title("Navigation")
-        selected = st.sidebar.selectbox("Select Section", ["Home", "Comments Analyser", "Contact", "Logout"])
+        selected = st.sidebar.radio("Go to", ("Home", "Comments Analyser", "Contact", "Logout"))
 
         if selected == "Home":
             # First Section: Welcome Messages

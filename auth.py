@@ -1,21 +1,34 @@
 import streamlit as st
 import bcrypt
 import firebase_admin
-from firebase_admin import firestore, credentials, auth
+from firebase_admin import firestore, credentials, auth, storage
 from datetime import datetime, timedelta
 # import datetime
 import time  # Import the time module
 
 # Initialize Firebase
 if not firebase_admin._apps:
-    cred = credentials.Certificate("firestore-key.json")
-    firebase_admin.initialize_app(cred)
+    cred = credentials.Certificate("serviceAccount.json")
+    firebase_admin.initialize_app(cred, {
+        'storageBucket': 'fyp-streamlitapp.appspot.com'  # Firebase Storage bucket
+    })
 
-# Firestore client
+# # Firestore client
 db = firestore.client()
+
+# Firebase Storage bucket
+bucket = storage.bucket()
+
+# write
+# storage.child("images").download("downloaded.jpg")
+# download
+# storage.download("images/downloaded.jpg", "downloaded.jpg")
 
 def get_firestore_client():
     return db
+
+def get_storage_bucket():
+    return bucket
 
 def hash_password(password):
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
