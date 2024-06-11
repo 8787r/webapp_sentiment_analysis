@@ -109,13 +109,14 @@ def generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_
 
     # Add sentiment score bar chart
     img_buffer = BytesIO()
-    sentiment_score_fig.set_size_inches(5, 2.5)
+    sentiment_score_fig.set_size_inches(5.5, 2.5)
+    sentiment_score_fig.tight_layout()  # Ensure tight layout
     sentiment_score_fig.savefig(img_buffer, format='png')
     img_buffer.seek(0)
     sentiment_score_img = ImageReader(img_buffer)
-    y_position = check_y_position(y_position, 50, 200)
+    y_position = check_y_position(y_position, 20, 200)
     pdf.drawImage(sentiment_score_img, 100, y_position - 200, width=400, height=200)
-    y_position -= 250
+    y_position -= 270
 
     # Add sentiment pie chart
     img_buffer = BytesIO()
@@ -224,22 +225,29 @@ def view_upload_history(username):
             else:
                 formatted_timestamp = timestamp
 
-            # Append the file name, timestamp, and document ID to the history list
-            history.append({"File Name": file_name, "Upload Time": formatted_timestamp, "doc_id": dataset.id})
+             # Append the file name, timestamp, and document ID to the history list
+            history.append({
+                "File Name": file_name,
+                "Upload Time": formatted_timestamp,
+                "pdf_url": pdf_url,
+                "doc_id": dataset.id
+            })
 
         # Sort the history list by 'Upload Time' in descending order
         history = sorted(history, key=lambda x: x["Upload Time"], reverse=True)
 
-        # Display the history with delete buttons
+        # Display the history with delete and view/download buttons
         st.write("Upload History:")
         for entry in history:
-            col1, col2, col3 = st.columns([4, 4, 1])
+            col1, col2, col3, col4 = st.columns([3, 3, 1, 1])
             col1.write(entry["File Name"])
             col2.write(entry["Upload Time"])
-            if col3.button("Delete", key=f"delete_{entry['doc_id']}"):
+            if entry["pdf_url"] != "No Report Available":
+                col3.markdown(f"[View/Download Report]({entry['pdf_url']})")
+            if col4.button("Delete", key=f"delete_{entry['doc_id']}"):
                 st.session_state.confirm_delete = entry["doc_id"]
                 st.session_state.file_name_to_delete = entry["File Name"]
-                st.experimental_rerun()  # Rerun the app to refresh the state
+                st.experimental_rerun()  # Rerun the app to refresh the state# Rerun the app to refresh the state
 
         # Display confirmation modal if a delete action is triggered
         if st.session_state.get("confirm_delete"):
@@ -416,6 +424,14 @@ def comments_analyser():
             # file_name = upl.name
             # dataset_content = df.to_csv(index=False)
             # save_dataset_to_firestore(st.session_state.username, dataset_content, file_name, pdf_url)
+
+            username = st.session_state.username
+            dataset_content = upl.getvalue().decode('utf-8') if upl.name.endswith('.csv') else df.to_csv(index=False)
+            file_name = upl.name
+            # Upload PDF report to Firebase Storage and get the URL
+            pdf_url = upload_pdf_to_storage(pdf_buffer, f"{username}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.pdf")
+            # Save dataset to Firestore with PDF URL
+            save_dataset_to_firestore(username, dataset_content, file_name, pdf_url)
 
 
     elif selected == "View History":
