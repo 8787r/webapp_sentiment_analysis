@@ -317,19 +317,19 @@ def comments_analyser():
 
             # st.write("Dataset is analyzed and saved successfully!")
 
-            # # Download analyzed data as CSV
-            # @st.cache_data
-            # def convert_df(df):
-            #     return df.to_csv().encode('utf-8')
+            # Download analyzed data as CSV
+            @st.cache_data
+            def convert_df(df):
+                return df.to_csv().encode('utf-8')
 
-            # csv = convert_df(analyzed_df)
+            csv = convert_df(analyzed_df)
 
-            # st.download_button(
-            #     label="Download Analyzed Data as CSV",
-            #     data=csv,
-            #     file_name='analyzed_data.csv',
-            #     mime='text/csv',
-            # )
+            st.download_button(
+                label="Download Analyzed Data as CSV",
+                data=csv,
+                file_name='analyzed_data.csv',
+                mime='text/csv',
+            )
 
             # Perform data cleaning on the text column
             cleaned_column = analyzed_df[analyzed_df.columns[0]].apply(lambda x: cleantext.clean(x, clean_all=False, extra_spaces=True,
@@ -338,6 +338,8 @@ def comments_analyser():
 
             # Concatenate cleaned text
             clean_text = ' '.join(cleaned_column)
+
+            st.markdown("<br><br>", unsafe_allow_html=True)
 
             # Calculate the total number of comments
             total_comments = len(analyzed_df)

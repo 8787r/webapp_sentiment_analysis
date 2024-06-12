@@ -101,8 +101,18 @@ def app():
             )
 
         if selected == "Contact":
-            st.title("Contact")
-            st.write("Email: commentsanalyser@cat405.my")
+            st.markdown(
+                """
+                <div style="text-align: center;">
+                    <h2><b>Contact Us</b></h2>
+                    <p>For any queries or feedback, please feel free to contact us.</p>
+                    <p>Email: commentsanalyser@cat405.my</p>
+                    <p>Contact number: 012-3456789</p>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            st.markdown("<br><br>", unsafe_allow_html=True)
 
         if selected == "Logout":
             st.title("Logout")
