@@ -19,11 +19,6 @@ db = firestore.client()
 # Firebase Storage bucket
 bucket = storage.bucket()
 
-# write
-# storage.child("images").download("downloaded.jpg")
-# download
-# storage.download("images/downloaded.jpg", "downloaded.jpg")
-
 def get_firestore_client():
     return db
 

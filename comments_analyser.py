@@ -25,22 +25,6 @@ nltk.download('vader_lexicon')
 
 check_session_timeout()
 
-# config = {
-#     "apiKey": "AIzaSyCLfASe_ybbOP_20sxpobrcSDRbXpJgtIk",
-#     "authDomain": "fyp-streamlitapp.firebaseapp.com",
-#     "projectId": "fyp-streamlitapp",
-#     "storageBucket": "fyp-streamlitapp.appspot.com",
-#     "messagingSenderId": "291567338789",
-#     "appId": "1:291567338789:web:1f079f785be18ac40486cc",
-#     "measurementId": "G-GSJCE7R9RE",
-#     "serviceAccount": "serviceAccount.json",
-#     "databaseURL": "https://fyp-streamlitapp-default-rtdb.asia-southeast1.firebasedatabase.app/"
-# }
-
-# firebase = pyrebase.initialize_app(config)
-
-# storage = firebase.storage()
-
 # Get Firestore client
 db = get_firestore_client()
 
@@ -155,12 +139,6 @@ def generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_
     buffer.seek(0)
 
     return buffer
-
-    # # Upload to Firebase Storage
-    # unique_file_name = f"{uuid.uuid4()}.pdf"
-    # pdf_url = upload_pdf_to_storage(buffer, unique_file_name)
-
-    # return pdf_url
 
 def save_dataset_to_firestore(username, dataset_content, file_name, pdf_url, max_chunk_size=1048000):
     # Read the CSV content into a DataFrame
@@ -417,15 +395,6 @@ def comments_analyser():
                 file_name="sentiment_analysis_report.pdf",
                 mime="application/pdf",
             )
-
-            # # Usage example after generating PDF report
-            # pdf_url = generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_buffer, fig1, fig2, lda_model, feature_names)
-            # # save_dataset_to_firestore(st.session_state.username, "dataset_file_name.csv", pdf_url)
-
-            # # Save dataset to Firestore
-            # file_name = upl.name
-            # dataset_content = df.to_csv(index=False)
-            # save_dataset_to_firestore(st.session_state.username, dataset_content, file_name, pdf_url)
 
             username = st.session_state.username
             dataset_content = upl.getvalue().decode('utf-8') if upl.name.endswith('.csv') else df.to_csv(index=False)
