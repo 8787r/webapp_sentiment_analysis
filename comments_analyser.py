@@ -19,6 +19,9 @@ from nltk.sentiment.vader import SentimentIntensityAnalyzer
 import pytz
 import uuid
 import pyrebase
+from bertopic import BERTopic
+# from fpdf import FPDF
+import io
 
 nltk.download('stopwords')
 nltk.download('vader_lexicon')
@@ -60,15 +63,15 @@ def analyze_dataframe(df):
             df['Polarity'], df['Sentiment'] = zip(*df[column].apply(perform_sentiment_analysis))
     return df
 
-def generate_wordcloud(clean_text):
-    wordcloud = WordCloud().generate(clean_text)
-    # Save WordCloud as an image
-    img_buffer = BytesIO()
-    plt.imshow(wordcloud, interpolation='bilinear')
-    plt.axis("off")
-    plt.savefig(img_buffer, format='png')
-    img_buffer.seek(0)
-    return img_buffer
+# def generate_wordcloud(clean_text):
+#     wordcloud = WordCloud().generate(clean_text)
+#     # Save WordCloud as an image
+#     img_buffer = BytesIO()
+#     plt.imshow(wordcloud, interpolation='bilinear')
+#     plt.axis("off")
+#     plt.savefig(img_buffer, format='png')
+#     img_buffer.seek(0)
+#     return img_buffer
 
 def upload_pdf_to_storage(pdf_buffer, file_name):
     bucket = get_storage_bucket()
@@ -78,7 +81,7 @@ def upload_pdf_to_storage(pdf_buffer, file_name):
     blob.make_public()
     return blob.public_url
 
-def generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_buffer, sentiment_score_fig, sentiment_pie_fig, lda_model, feature_names):
+def generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_pos_buffer, wordcloud_neg_buffer, sentiment_score_fig, sentiment_pie_fig, topic_model, feature_names, is_lda):
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=letter)
     page_width, page_height = letter
@@ -113,28 +116,47 @@ def generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_
     y_position -= 250
 
     # Add word cloud
+    # y_position = check_y_position(y_position, 50, 300)
+    # wordcloud_img = ImageReader(wordcloud_buffer)
+    # pdf.drawImage(wordcloud_img, 100, y_position - 300, width=400, height=300)
+    # y_position -= 350
+
+    # Add word cloud for positive sentiments
+    y_position = check_y_position(y_position, 50, 300)  
+    wordcloud_pos_img = ImageReader(wordcloud_pos_buffer)
+    pdf.drawImage(wordcloud_pos_img, 100, y_position - 300, width=400, height=300)
+    y_position -= 350
+
+    # Add word cloud for negative sentiments
     y_position = check_y_position(y_position, 50, 300)
-    wordcloud_img = ImageReader(wordcloud_buffer)
-    pdf.drawImage(wordcloud_img, 100, y_position - 300, width=400, height=300)
+    wordcloud_neg_img = ImageReader(wordcloud_neg_buffer)
+    pdf.drawImage(wordcloud_neg_img, 100, y_position - 300, width=400, height=300)
     y_position -= 350
 
     # Add top words bar chart for each topic
-    for topic_idx, topic in enumerate(lda_model.components_):
+    num_topics = 5
+    for topic_idx in range(min(num_topics, len(feature_names if is_lda else topic_model.get_topics()))):
         img_buffer = BytesIO()
         fig, ax = plt.subplots()
-        topic_words = [feature_names[i] for i in topic.argsort()[:-11:-1]]
-        counts = [topic[i] for i in topic.argsort()[:-11:-1]]
+        
+        if is_lda:
+            topic_words = [feature_names[i] for i in topic_model.components_[topic_idx].argsort()[:-11:-1]]
+            counts = topic_model.components_[topic_idx][topic_model.components_[topic_idx].argsort()[:-11:-1]]
+        else:
+            topic_words = [word for word, _ in topic_model.get_topic(topic_idx)]
+            counts = [count for _, count in topic_model.get_topic(topic_idx)]
+        
         ax.barh(topic_words, counts, color='skyblue')
         ax.set_xlabel('Frequency')
         ax.set_title(f'Top Words in Topic {topic_idx + 1}')
         ax.invert_yaxis()
         fig.savefig(img_buffer, format='png')
         img_buffer.seek(0)
-        topic_words_img = ImageReader(img_buffer)
+        topic_img = ImageReader(img_buffer)
         y_position = check_y_position(y_position, 50, 200)
-        pdf.drawImage(topic_words_img, 100, y_position - 200, width=400, height=200)
+        pdf.drawImage(topic_img, 100, y_position - 200, width=400, height=200)
         y_position -= 250
-
+    
     pdf.save()
     buffer.seek(0)
 
@@ -194,7 +216,7 @@ def view_upload_history(username):
             file_name = data.get("file_name", "Unknown File")  # Use a default value if 'file_name' is missing
             timestamp = data.get("timestamp", "Unknown Timestamp")  # Use a default value if 'timestamp' is missing
             pdf_url = data.get("pdf_url", "No Report Available")
-            
+
             if isinstance(timestamp, datetime):
                 # Convert timestamp to the desired time zone (e.g., UTC+8)
                 target_time_zone = pytz.timezone("Asia/Shanghai")
@@ -203,29 +225,93 @@ def view_upload_history(username):
             else:
                 formatted_timestamp = timestamp
 
-             # Append the file name, timestamp, and document ID to the history list
+            # Append the file name, timestamp, and document ID to the history list
             history.append({
-                "File Name": file_name,
-                "Upload Time": formatted_timestamp,
+                "file_name": file_name,
+                "upload_time": formatted_timestamp,
                 "pdf_url": pdf_url,
                 "doc_id": dataset.id
             })
 
         # Sort the history list by 'Upload Time' in descending order
-        history = sorted(history, key=lambda x: x["Upload Time"], reverse=True)
+        history = sorted(history, key=lambda x: x["upload_time"], reverse=True)
 
-        # Display the history with delete and view/download buttons
+        # Display the history in a custom table
         st.write("Upload History:")
+
+        # CSS for custom styling
+        st.markdown("""
+            <style>
+                .history-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-bottom: 1rem;
+                }
+                .history-table th, .history-table td {
+                    border: 1px solid #ddd;
+                    padding: 8px;
+                    text-align: left;
+                }
+                .history-table th {
+                    background-color: #f2f2f2;
+                    font-weight: bold;
+                }
+                .history-table tr:nth-child(even) {
+                    background-color: #f9f9f9;
+                }
+                .history-table tr:hover {
+                    background-color: #f1f1f1;
+                }
+                .history-table button {
+                    padding: 5px 10px;
+                    font-size: 14px;
+                    cursor: pointer;
+                    color: white;
+                    border: none;
+                    border-radius: 5px;
+                }
+                .history-table .view-button {
+                    background-color: #4CAF50;
+                }
+                .history-table .delete-button {
+                    background-color: #f44336;
+                }
+            </style>
+        """, unsafe_allow_html=True)
+
+        # Create the table header
+        st.markdown("""
+            <table class="history-table">
+                <thead>
+                    <tr>
+                        <th>Dataset Name</th>
+                        <th>Upload Time</th>
+                        <th>View</th>
+                        <th>Delete</th>
+                    </tr>
+                </thead>
+                <tbody>
+        """, unsafe_allow_html=True)
+
         for entry in history:
             col1, col2, col3, col4 = st.columns([3, 3, 1, 1])
-            col1.write(entry["File Name"])
-            col2.write(entry["Upload Time"])
-            if entry["pdf_url"] != "No Report Available":
-                col3.markdown(f"[View/Download Report]({entry['pdf_url']})")
-            if col4.button("Delete", key=f"delete_{entry['doc_id']}"):
-                st.session_state.confirm_delete = entry["doc_id"]
-                st.session_state.file_name_to_delete = entry["File Name"]
-                st.experimental_rerun()  # Rerun the app to refresh the state# Rerun the app to refresh the state
+            with col1:
+                st.write(entry["file_name"])
+            with col2:
+                st.write(entry["upload_time"])
+            with col3:
+                if entry["pdf_url"] != "No Report Available":
+                    st.markdown(f'<a href="{entry["pdf_url"]}" target="_blank"><button class="view-button">View</button></a>', unsafe_allow_html=True)
+                else:
+                    st.write("No Report Available")
+            with col4:
+                if st.button("Delete", key=f'delete_{entry["doc_id"]}'):
+                    st.session_state.confirm_delete = entry["doc_id"]
+                    st.session_state.file_name_to_delete = entry["file_name"]
+                    st.experimental_rerun()  # Rerun the app to refresh the state
+
+        # End the table
+        st.markdown("</tbody></table>", unsafe_allow_html=True)
 
         # Display confirmation modal if a delete action is triggered
         if st.session_state.get("confirm_delete"):
@@ -244,15 +330,14 @@ def view_upload_history(username):
     except Exception as e:
         st.error(f"An error occurred: {e}")
 
-# Function to delete a history entry from Firestore
 def delete_history_entry(doc_id):
     try:
         db.collection("datasets").document(doc_id).delete()
-        st.success("Deleted successfully.")
+        st.success("The file has been deleted successfully.")
     except Exception as e:
-        st.error(f"An error occurred while deleting: {e}")
+        st.error(f"An error occurred while deleting the file: {e}")
 
-def perform_topic_modeling(text_data):
+def perform_topic_modeling_lda(text_data):
     # Initialize CountVectorizer
     vectorizer = CountVectorizer(max_df=0.95, min_df=2, stop_words='english')
 
@@ -269,7 +354,65 @@ def perform_topic_modeling(text_data):
     # Fit LDA to the transformed data
     lda_model.fit(X)
 
-    return lda_model, feature_names
+    # Get topics
+    topics = lda_model.components_
+
+    return lda_model, feature_names, topics
+
+def perform_topic_modeling_bertopic(text_data):
+    # Initialize BERTopic model
+    topic_model = BERTopic()
+
+    # Fit the model on the text data
+    topics, probs = topic_model.fit_transform(text_data)
+
+    # Get the topic names and keywords
+    topic_names = topic_model.get_topic_info()
+    topic_keywords = {topic: keywords for topic, keywords in topic_model.get_topics().items()}
+
+    return topic_model, topic_names, topic_keywords
+
+def display_topic_words_lda(lda_model, feature_names, num_words=10):
+    topic_word_data = {}
+    for topic_idx, topic in enumerate(lda_model.components_):
+        topic_words = [feature_names[i] for i in topic.argsort()[:-num_words - 1:-1]]
+        topic_word_data[f'Topic {topic_idx + 1}'] = topic_words
+    
+    cols = st.columns(len(topic_word_data))
+    for idx, (topic, words) in enumerate(topic_word_data.items()):
+        with cols[idx]:
+            fig, ax = plt.subplots()
+            counts = [lda_model.components_[list(topic_word_data.keys()).index(topic)][feature_names.tolist().index(word)] for word in words]
+            ax.barh(words, counts, color='skyblue')
+            ax.set_xlabel('Frequency')
+            ax.set_title(f'Top Words in {topic}')
+            ax.invert_yaxis()
+            st.pyplot(fig)
+
+def display_topic_words_bertopic(topic_model, topic_keywords, num_topics=5):
+    topic_word_data = {}
+    for topic, keywords in list(topic_keywords.items())[:num_topics]:
+        words = [word for word, _ in keywords]
+        topic_name = topic_model.get_topic_info().query(f"Topic == {topic}")["Name"].values[0]
+        topic_word_data[topic_name] = words
+
+    cols = st.columns(len(topic_word_data))
+    for idx, (topic_name, words) in enumerate(topic_word_data.items()):
+        with cols[idx]:
+            fig, ax = plt.subplots()
+            counts = [count for _, count in topic_keywords[topic]]
+            ax.barh(words, counts, color='skyblue')
+            ax.set_xlabel('Frequency')
+            ax.set_title(f'Top Words in {topic_name}')  # Use topic name in title
+            ax.invert_yaxis()
+            st.pyplot(fig)
+
+def generate_wordcloud(text):
+    wordcloud = WordCloud().generate(text)
+    buffer = BytesIO()
+    wordcloud.to_image().save(buffer, format="PNG")
+    buffer.seek(0)
+    return buffer
 
 # main function
 def comments_analyser():
@@ -284,30 +427,30 @@ def comments_analyser():
 
         if upl:
             df = pd.read_csv(upl) if upl.name.endswith('.csv') else pd.read_excel(upl, engine='openpyxl')
-            st.write("First ten rows of Original Data:")
-            st.write(df.head(10))
+            # st.write("First ten rows of Original Data:")
+            # st.write(df.head(10))
 
             # Perform phrase extraction and sentiment analysis
             analyzed_df = analyze_dataframe(df)
 
-            st.write("First ten rows of Analyzed Data:")
-            st.write(analyzed_df.head(10))
+            # st.write("First ten rows of Analyzed Data:")
+            # st.write(analyzed_df.head(10))
 
             # st.write("Dataset is analyzed and saved successfully!")
 
             # Download analyzed data as CSV
-            @st.cache_data
-            def convert_df(df):
-                return df.to_csv().encode('utf-8')
+            # @st.cache_data
+            # def convert_df(df):
+            #     return df.to_csv().encode('utf-8')
 
-            csv = convert_df(analyzed_df)
+            # csv = convert_df(analyzed_df)
 
-            st.download_button(
-                label="Download Analyzed Data as CSV",
-                data=csv,
-                file_name='analyzed_data.csv',
-                mime='text/csv',
-            )
+            # st.download_button(
+            #     label="Download Analyzed Data as CSV",
+            #     data=csv,
+            #     file_name='analyzed_data.csv',
+            #     mime='text/csv',
+            # )
 
             # Perform data cleaning on the text column
             cleaned_column = analyzed_df[analyzed_df.columns[0]].apply(lambda x: cleantext.clean(x, clean_all=False, extra_spaces=True,
@@ -315,7 +458,14 @@ def comments_analyser():
                                                                                 numbers=True, punct=True))
 
             # Concatenate cleaned text
-            clean_text = ' '.join(cleaned_column)
+            # clean_text = ' '.join(cleaned_column)
+
+            # Filter comments by sentiment
+            positive_comments = analyzed_df[analyzed_df['Sentiment'] == 'Positive']
+            negative_comments = analyzed_df[analyzed_df['Sentiment'] == 'Negative']
+
+            positive_text = ' '.join(positive_comments[positive_comments.columns[0]])
+            negative_text = ' '.join(negative_comments[negative_comments.columns[0]])
 
             st.markdown("<br><br>", unsafe_allow_html=True)
 
@@ -323,12 +473,124 @@ def comments_analyser():
             total_comments = len(analyzed_df)
             st.write(f"Results derived from {total_comments} comments")
 
+            # Using st.metric for key metrics
+            # col1, col2, col3 = st.columns(3)
+            # col1.metric(label="Total Comments", value=total_comments)
+            # col2.metric(label="Positive Comments", value=len(positive_comments))
+            # col3.metric(label="Negative Comments", value=len(negative_comments))
+
+            # Add CSS to style the columns
+            st.markdown("""
+                <style>
+                .metric-container {
+                    display: flex;
+                    justify-content: space-between;
+                    margin-top: 1rem;
+                    margin-bottom: 1rem;
+                }
+                .metric-box {
+                    background-color: #f9f9f9;
+                    padding: 1rem;
+                    border-radius: 10px;
+                    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+                    text-align: center;
+                    width: 100%;
+                    margin-right: 10px;
+                    flex-grow: 1;
+                }
+                .metric-box h3 {
+                    font-size: 1.5rem;
+                    color: #333;
+                    font-weight: 600;
+                }
+                </style>
+            """, unsafe_allow_html=True)
+
+            st.markdown(f"""
+                <div class="metric-container">
+                    <div class="metric-box">
+                        <h3>{total_comments}</h3>
+                        <p>Total Comments</p>   
+                    </div>
+                    <div class="metric-box">
+                        <h3>{len(positive_comments)}</h3>
+                        <p>Positive Comments</p>
+                    </div>
+                    <div class="metric-box">
+                        <h3>{len(negative_comments)}</h3>
+                        <p>Negative Comments</p>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+
+            st.markdown("<br><br>", unsafe_allow_html=True)
+
             # col = st.columns((4,4), gap='small')
             col1, col2 = st.columns((1, 1))
 
             with col1: 
+                st.write("First ten rows of Original Data:")
+                st.write(df.head(10))
+
+                st.markdown("<br><br>", unsafe_allow_html=True)
+                # st.markdown("<br><br>", unsafe_allow_html=True)
+
+                st.write("Word Cloud for Positive Sentiments")
+                wordcloud_pos = WordCloud().generate(positive_text)
+                fig_pos, ax_pos = plt.subplots()
+                ax_pos.imshow(wordcloud_pos, interpolation='bilinear')
+                ax_pos.axis("off")
+                st.pyplot(fig_pos)
+                wordcloud_pos_buffer = generate_wordcloud(positive_text)
+
+                st.write("Word Cloud for Negative Sentiments")
+                wordcloud_neg = WordCloud().generate(negative_text)
+                fig_neg, ax_neg = plt.subplots()
+                ax_neg.imshow(wordcloud_neg, interpolation='bilinear')
+                ax_neg.axis("off")
+                st.pyplot(fig_neg)
+                wordcloud_neg_buffer = generate_wordcloud(negative_text)
                 
+                # Generate Word Cloud
+                # wordcloud = WordCloud().generate(clean_text)
+                # fig3, ax3 = plt.subplots()
+                # ax3.imshow(wordcloud, interpolation='bilinear')
+                # ax3.axis("off")
+                # st.pyplot(fig3)
+                # wordcloud_buffer = generate_wordcloud(clean_text) 
+                
+                
+            with col2:
+                st.write("First ten rows of Analyzed Data:")
+                st.write(analyzed_df.head(10))
+                @st.cache_data
+                def convert_df(df):
+                    return df.to_csv().encode('utf-8')
+
+                csv = convert_df(analyzed_df)
+
+                st.download_button(
+                    label="Download Analyzed Data",
+                    data=csv,
+                    file_name='analyzed_data.csv',
+                    mime='text/csv',
+                )
+
+                # st.markdown("<br><br>", unsafe_allow_html=True)
+
+                # Percentage of Positive/Negative/Neutral Sentiment
+                st.write("Percentage of Sentiment")
+                sentiment_counts = analyzed_df['Sentiment'].value_counts(normalize=True) * 100
+                labels = sentiment_counts.index
+                sizes = sentiment_counts.values
+                fig2, ax2 = plt.subplots(figsize=(8, 6))
+                ax2.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140)
+                ax2.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
+                # ax2.set_title('Percentage of Sentiment')
+                st.pyplot(fig2)
+
                 # Overall Sentiment Score
+                st.write("Overall Sentiment Score")
                 overall_score = analyzed_df['Polarity'].mean()
                 overall_score_percentage = round((overall_score + 1) / 2 * 100, 2)  # Scale to [0, 100] for visualization
 
@@ -336,7 +598,7 @@ def comments_analyser():
                 ax1.barh(['Overall Sentiment Score'], [100], color='lightgray')  # Full percentage bar
                 ax1.barh(['Overall Sentiment Score'], [overall_score_percentage], color='blue')  # Score percentage bar
                 ax1.set_xlabel('Percentage')
-                ax1.set_title('Overall Sentiment Score')
+                # ax1.set_title('Overall Sentiment Score')
                 ax1.set_xlim(0, 100)
                 ax1.invert_yaxis()  # Invert y-axis to have the bar extend from left to right
                 ax1.text(overall_score_percentage + 2, 0, f'{overall_score_percentage}%', va='center')
@@ -345,49 +607,23 @@ def comments_analyser():
                 ax1.text(50, 0.4, '50%: Neutral', ha='center', va='center', color='black', fontsize=8)
                 ax1.text(100, 0.4, '100%: Extremely Positive', ha='center', va='center', color='green', fontsize=8)
                 st.pyplot(fig1)
-                
-                # Generate Word Cloud
-                wordcloud = WordCloud().generate(clean_text)
-                fig3, ax3 = plt.subplots()
-                ax3.imshow(wordcloud, interpolation='bilinear')
-                ax3.axis("off")
-                st.pyplot(fig3)
-                wordcloud_buffer = generate_wordcloud(clean_text) 
 
-            with col2:
-                # Percentage of Positive/Negative/Neutral Sentiment
-                sentiment_counts = analyzed_df['Sentiment'].value_counts(normalize=True) * 100
-                labels = sentiment_counts.index
-                sizes = sentiment_counts.values
-                fig2, ax2 = plt.subplots(figsize=(8, 6))
-                ax2.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140)
-                ax2.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
-                ax2.set_title('Percentage of Sentiment')
-                st.pyplot(fig2)
+            # Topic Modeling Options
+            topic_model_option = st.selectbox("Choose Topic Modeling Method:", ["LDA", "BERTopic"])
 
-            # Perform topic modeling
-            lda_model, feature_names = perform_topic_modeling(cleaned_column)
-        
-            # Bar chart for top words in each topic
-            topic_word_data = {}
-            for topic_idx, topic in enumerate(lda_model.components_):
-                topic_words = [feature_names[i] for i in topic.argsort()[:-11:-1]]
-                topic_word_data[f'Topic {topic_idx+1}'] = topic_words
-
-            cols = st.columns(5)
-
-            for idx, (topic, words) in enumerate(topic_word_data.items()):
-                with cols[idx]:
-                    fig, ax = plt.subplots()
-                    counts = [lda_model.components_[list(topic_word_data.keys()).index(topic)][feature_names.tolist().index(word)] for word in words]
-                    ax.barh(words, counts, color='skyblue')
-                    ax.set_xlabel('Frequency')
-                    ax.set_title(f'Top Words in {topic}')
-                    ax.invert_yaxis()
-                    st.pyplot(fig)
+            if topic_model_option == "LDA":
+                lda_model, feature_names, topics = perform_topic_modeling_lda(cleaned_column)
+                display_topic_words_lda(lda_model, feature_names)
+                topic_model = lda_model
+                is_lda = True
+            elif topic_model_option == "BERTopic":
+                topic_model, topic_names, topic_keywords = perform_topic_modeling_bertopic(cleaned_column)
+                display_topic_words_bertopic(topic_model, topic_keywords)
+                feature_names = []  # BERTopic doesn't use feature names in the same way
+                is_lda = False
             
             # Generate the PDF report
-            pdf_buffer = generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_buffer, fig1, fig2, lda_model, feature_names)
+            pdf_buffer = generate_pdf_report(analyzed_df, overall_score, sentiment_counts, wordcloud_pos_buffer, wordcloud_neg_buffer, fig1, fig2, topic_model, feature_names, is_lda)
 
             st.download_button(
                 label="Download Report as PDF",
