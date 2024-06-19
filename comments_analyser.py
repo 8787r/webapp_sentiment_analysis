@@ -22,6 +22,13 @@ import pyrebase
 from bertopic import BERTopic
 # from fpdf import FPDF
 import io
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
+import seaborn as sns
+import pyLDAvis
+# import pyLDAvis.sklearn
+import streamlit.components.v1 as components
+import os
 
 nltk.download('stopwords')
 nltk.download('vader_lexicon')
@@ -414,6 +421,76 @@ def generate_wordcloud(text):
     buffer.seek(0)
     return buffer
 
+# Function to cluster comments
+def cluster_comments(dtm, n_clusters=3):
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+    kmeans.fit(dtm)
+    clusters = kmeans.labels_
+    return clusters
+
+# Function to perform topic modeling using LDA
+def lda_topic_modeling(dtm, n_topics=5):
+    lda = LatentDirichletAllocation(n_components=n_topics, random_state=42)
+    doc_topic_dists = lda.fit_transform(dtm)
+    topic_term_dists = lda.components_ / lda.components_.sum(axis=1)[:, None]
+    return lda, doc_topic_dists, topic_term_dists
+
+# Visualize clusters
+def visualize_clusters(analyzed_df):
+    cluster_counts = analyzed_df['cluster'].value_counts()
+    plt.figure(figsize=(10, 6))
+    sns.barplot(x=cluster_counts.index, y=cluster_counts.values, palette="viridis")
+    plt.title('Comment Clusters')
+    plt.xlabel('Cluster')
+    plt.ylabel('Number of Comments')
+    st.pyplot(plt)
+
+# Interactive topic modeling visualization
+def interactive_topic_modeling(lda_model, dtm, vectorizer):
+    vocab = {term: idx for idx, term in enumerate(vectorizer.get_feature_names_out())}
+    term_frequency = dtm.sum(axis=0).A1  # Calculate term frequencies
+    _, doc_topic_dists, topic_term_dists = lda_model
+    panel = pyLDAvis.prepare(topic_term_dists, doc_topic_dists, vocab, term_frequency=term_frequency, mds='tsne')
+    pyLDAvis.save_html(panel, 'lda.html')
+    with open('lda.html', 'r') as f:
+        html_string = f.read()
+    components.html(html_string, height=800, scrolling=True)
+
+# Heatmap of word frequencies by sentiment category
+def plot_word_frequency_heatmap(df, num_words=20):
+    positive_texts = ' '.join(df[df['Sentiment'] == 'Positive']['content'])
+    negative_texts = ' '.join(df[df['Sentiment'] == 'Negative']['content'])
+    neutral_texts = ' '.join(df[df['Sentiment'] == 'Neutral']['content'])
+
+    vectorizer = TfidfVectorizer(stop_words='english', max_features=num_words)
+    pos_matrix = vectorizer.fit_transform([positive_texts])
+    neg_matrix = vectorizer.fit_transform([negative_texts])
+    neu_matrix = vectorizer.fit_transform([neutral_texts])
+
+    pos_freq = pos_matrix.toarray().flatten()
+    neg_freq = neg_matrix.toarray().flatten()
+    neu_freq = neu_matrix.toarray().flatten()
+
+    words = vectorizer.get_feature_names_out()
+
+    freq_df = pd.DataFrame({'Positive': pos_freq, 'Negative': neg_freq, 'Neutral': neu_freq}, index=words)
+    freq_df = freq_df.T
+
+    plt.figure(figsize=(12, 6))
+    sns.heatmap(freq_df, annot=True, cmap='coolwarm')
+    plt.title('Word Frequencies by Sentiment Category')
+    st.pyplot(plt)
+
+# Sentiment scores by time (if timestamp is available)
+def plot_sentiment_over_time(df, timestamp_column):
+    df[timestamp_column] = pd.to_datetime(df[timestamp_column])
+    df.set_index(timestamp_column, inplace=True)
+    df['polarity'].resample('M').mean().plot(kind='line', figsize=(12, 6))
+    plt.title('Sentiment Scores Over Time')
+    plt.xlabel('Time')
+    plt.ylabel('Average Polarity')
+    st.pyplot(plt)
+
 # main function
 def comments_analyser():
     st.title("Comments Analyser")
@@ -469,9 +546,11 @@ def comments_analyser():
 
             st.markdown("<br><br>", unsafe_allow_html=True)
 
+            st.header("Analysis Results")
+
             # Calculate the total number of comments
             total_comments = len(analyzed_df)
-            st.write(f"Results derived from {total_comments} comments")
+            st.write(f"Derived from {total_comments} comments")
 
             # Using st.metric for key metrics
             # col1, col2, col3 = st.columns(3)
@@ -608,8 +687,13 @@ def comments_analyser():
                 ax1.text(100, 0.4, '100%: Extremely Positive', ha='center', va='center', color='green', fontsize=8)
                 st.pyplot(fig1)
 
+            # Word Frequency Heatmap by Sentiment Category
+            # st.subheader("Heatmap of Word Frequencies by Sentiment Category")
+            plot_word_frequency_heatmap(analyzed_df)
+            
             # Topic Modeling Options
-            topic_model_option = st.selectbox("Choose Topic Modeling Method:", ["LDA", "BERTopic"])
+            topic_model_option = st.sidebar.selectbox("Select Topic Modeling Method", ["LDA", "BERTopic"])
+            # selected = st.sidebar.selectbox("Select Section", ["Upload Data", "View History"])
 
             if topic_model_option == "LDA":
                 lda_model, feature_names, topics = perform_topic_modeling_lda(cleaned_column)
@@ -640,6 +724,28 @@ def comments_analyser():
             # Save dataset to Firestore with PDF URL
             save_dataset_to_firestore(username, dataset_content, file_name, pdf_url)
 
+            # # Sentiment Scores Over Time (if timestamp is available)
+            # if 'timestamp' in df.columns:
+            #     st.subheader("Sentiment Scores Over Time")
+            #     plot_sentiment_over_time(analyzed_df, 'timestamp')
+
+            # # Initialize TfidfVectorizer
+            # vectorizer = TfidfVectorizer(stop_words='english')
+            # dtm = vectorizer.fit_transform(analyzed_df['content'])
+            # feature_names = vectorizer.get_feature_names_out()
+
+            # # Clustering comments
+            # n_clusters = 3
+            # analyzed_df['cluster'] = cluster_comments(dtm, n_clusters)
+
+            # # Visualize clusters
+            # st.header("Comment Clusters")
+            # visualize_clusters(analyzed_df)
+
+            # # Topic Modeling
+            # n_topics = 5
+            # lda_model, doc_topic_dists, topic_term_dists = lda_topic_modeling(dtm, n_topics)
+            # interactive_topic_modeling((lda_model, doc_topic_dists, topic_term_dists), dtm, vectorizer)
 
     elif selected == "View History":
         st.subheader("View History")
